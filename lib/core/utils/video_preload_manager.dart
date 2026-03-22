@@ -7,6 +7,7 @@ class VideoPreloadManager {
   final List<Episode> episodes;
   final Map<int, VideoPlayerController> _controllers = {};
   final Map<int, bool> _initialized = {};
+  final Map<int, bool> _errors = {};
 
   VideoPreloadManager({required this.episodes});
 
@@ -16,6 +17,7 @@ class VideoPreloadManager {
   }
 
   bool isInitialized(int index) => _initialized[index] ?? false;
+  bool hasError(int index) => _errors[index] ?? false;
 
   void onPageChanged(int currentIndex) {
     final windowStart = (currentIndex - 1).clamp(0, episodes.length - 1);
@@ -32,7 +34,16 @@ class VideoPreloadManager {
       _controllers[idx]?.dispose();
       _controllers.remove(idx);
       _initialized.remove(idx);
+      _errors.remove(idx);
     }
+  }
+
+  void retryController(int index) {
+    _controllers[index]?.dispose();
+    _controllers.remove(index);
+    _initialized.remove(index);
+    _errors.remove(index);
+    _createController(index);
   }
 
   void _createController(int index) {
@@ -41,9 +52,12 @@ class VideoPreloadManager {
     );
     _controllers[index] = controller;
     _initialized[index] = false;
+    _errors[index] = false;
     controller.initialize().then((_) {
       _initialized[index] = true;
       controller.setLooping(true);
+    }).catchError((_) {
+      _errors[index] = true;
     });
   }
 
@@ -53,5 +67,6 @@ class VideoPreloadManager {
     }
     _controllers.clear();
     _initialized.clear();
+    _errors.clear();
   }
 }

@@ -40,6 +40,7 @@ class _VideoFeedPageState extends State<VideoFeedPage>
     with SingleTickerProviderStateMixin {
   late VideoPlayerController _controller;
   bool _isInitialized = false;
+  bool _hasError = false;
   bool _showPlayPauseIcon = false;
   bool _paywallTriggered = false;
   bool _isLongPressed = false;
@@ -67,6 +68,8 @@ class _VideoFeedPageState extends State<VideoFeedPage>
     if (widget.preloadManager.isInitialized(widget.pageIndex)) {
       _isInitialized = true;
       if (widget.isActive) _controller.play();
+    } else if (widget.preloadManager.hasError(widget.pageIndex)) {
+      _hasError = true;
     } else {
       _controller.addListener(_onControllerReady);
     }
@@ -76,12 +79,29 @@ class _VideoFeedPageState extends State<VideoFeedPage>
 
 
   void _onControllerReady() {
+    if (_controller.value.hasError) {
+      _controller.removeListener(_onControllerReady);
+      if (!mounted) return;
+      setState(() => _hasError = true);
+      return;
+    }
     if (_controller.value.isInitialized && !_isInitialized) {
       _controller.removeListener(_onControllerReady);
       if (!mounted) return;
       setState(() => _isInitialized = true);
       if (widget.isActive) _controller.play();
     }
+  }
+
+  void _retry() {
+    _controller.removeListener(_onVideoPositionChanged);
+    _controller.removeListener(_onControllerReady);
+    setState(() {
+      _hasError = false;
+      _isInitialized = false;
+    });
+    widget.preloadManager.retryController(widget.pageIndex);
+    _initController();
   }
 
   void _onVideoPositionChanged() {
@@ -238,7 +258,9 @@ class _VideoFeedPageState extends State<VideoFeedPage>
         children: [
           Container(color: AppColors.bgDeep),
 
-          if (!_isInitialized)
+          if (_hasError)
+            _VideoErrorView(onRetry: _retry)
+          else if (!_isInitialized)
             const SkeletonLoader()
           else ...[
             VideoPlayerWidget(controller: _controller),
@@ -365,3 +387,56 @@ class _VideoFeedPageState extends State<VideoFeedPage>
   }
 }
 
+class _VideoErrorView extends StatelessWidget {
+  final VoidCallback onRetry;
+
+  const _VideoErrorView({required this.onRetry});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      color: AppColors.bgDeep,
+      child: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(
+              Icons.wifi_off_rounded,
+              color: Colors.white38,
+              size: 52,
+            ),
+            const SizedBox(height: 16),
+            const Text(
+              'Could not load video',
+              style: TextStyle(
+                color: Colors.white70,
+                fontSize: 15,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+            const SizedBox(height: 24),
+            GestureDetector(
+              onTap: onRetry,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 12),
+                decoration: BoxDecoration(
+                  color: AppColors.accent,
+                  borderRadius: BorderRadius.circular(24),
+                ),
+                child: const Text(
+                  'Retry',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0.5,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
