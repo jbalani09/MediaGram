@@ -57,6 +57,7 @@ class _DoubleTapLikeState extends State<DoubleTapLike> {
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
+      behavior: HitTestBehavior.opaque,
       onTap: widget.onSingleTap,
       onDoubleTapDown: _onDoubleTapDown,
       onDoubleTap: _onDoubleTap,

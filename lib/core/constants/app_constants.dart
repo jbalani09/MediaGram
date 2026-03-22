@@ -8,6 +8,7 @@ class AppConstants {
   static const Duration shimmerSweepDuration = Duration(seconds: 3);
   static const Duration progressExpandDuration = Duration(milliseconds: 150);
   static const Duration tapFeedbackDuration = Duration(milliseconds: 500);
+  static const Duration videoFadeInDuration = Duration(milliseconds: 300);
 
   // Progress bar heights
   static const double progressBarNormalHeight = 3.0;

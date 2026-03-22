@@ -43,8 +43,8 @@ class _VideoFeedPageState extends State<VideoFeedPage>
   bool _hasError = false;
   bool _showPlayPauseIcon = false;
   bool _paywallTriggered = false;
-  bool _isLongPressed = false;
-  bool _is2xSpeed = false;
+  final _isLongPressedNotifier = ValueNotifier<bool>(false);
+  final _is2xSpeedNotifier = ValueNotifier<bool>(false);
   late AnimationController _playPauseAnimController;
   late Animation<double> _playPauseAnim;
 
@@ -129,12 +129,12 @@ class _VideoFeedPageState extends State<VideoFeedPage>
 
 
   void _resetSpeed() {
-    if (_is2xSpeed) {
+    if (_is2xSpeedNotifier.value) {
       _controller.setPlaybackSpeed(1.0);
-      if (mounted) setState(() => _is2xSpeed = false);
+      _is2xSpeedNotifier.value = false;
     }
-    if (_isLongPressed) {
-      if (mounted) setState(() => _isLongPressed = false);
+    if (_isLongPressedNotifier.value) {
+      _isLongPressedNotifier.value = false;
     }
   }
 
@@ -191,18 +191,18 @@ class _VideoFeedPageState extends State<VideoFeedPage>
     if (isHorizontalEdge && isVerticalMiddle) {
       HapticUtil.medium();
       _controller.setPlaybackSpeed(2.0);
-      setState(() => _is2xSpeed = true);
+      _is2xSpeedNotifier.value = true;
     } else {
       // Any other area → pause / hold
       HapticUtil.light();
       _controller.pause();
-      setState(() => _isLongPressed = true);
+      _isLongPressedNotifier.value = true;
     }
   }
 
   void _onLongPressEnd() {
     if (!_isInitialized) return;
-    final wasPaused = _isLongPressed;
+    final wasPaused = _isLongPressedNotifier.value;
     _resetSpeed();
     if (wasPaused) {
       final paywallProvider = context.read<PaywallProvider>();
@@ -241,6 +241,8 @@ class _VideoFeedPageState extends State<VideoFeedPage>
     _controller.removeListener(_onVideoPositionChanged);
     _controller.removeListener(_onControllerReady);
     _playPauseAnimController.dispose();
+    _is2xSpeedNotifier.dispose();
+    _isLongPressedNotifier.dispose();
     super.dispose();
   }
 
@@ -260,126 +262,145 @@ class _VideoFeedPageState extends State<VideoFeedPage>
 
           if (_hasError)
             _VideoErrorView(onRetry: _retry)
-          else if (!_isInitialized)
-            const SkeletonLoader()
           else ...[
-            VideoPlayerWidget(controller: _controller),
-            const GradientOverlay(isTop: true),
-            const GradientOverlay(isTop: false),
+            if (!_isInitialized) const SkeletonLoader(),
+            if (_isInitialized) ...[
+              AnimatedOpacity(
+                duration: AppConstants.videoFadeInDuration,
+                opacity: _isInitialized ? 1.0 : 0.0,
+                child: VideoPlayerWidget(controller: _controller),
+              ),
+              const GradientOverlay(isTop: true),
+              const GradientOverlay(isTop: false),
 
-            DoubleTapLike(
-              episodeId: widget.episode.id,
-              onSingleTap: isPaywallActive ? null : _togglePlayPause,
-              onLongPressStart: isPaywallActive ? null : _onLongPressStart,
-              onLongPressEnd: isPaywallActive ? null : _onLongPressEnd,
-              child: Container(color: Colors.transparent),
-            ),
-
-            if (_isLongPressed)
-              IgnorePointer(
-                child: Container(color: Colors.black.withValues(alpha: 0.35)),
+              DoubleTapLike(
+                episodeId: widget.episode.id,
+                onSingleTap: isPaywallActive ? null : _togglePlayPause,
+                onLongPressStart: isPaywallActive ? null : _onLongPressStart,
+                onLongPressEnd: isPaywallActive ? null : _onLongPressEnd,
+                child: Container(color: Colors.transparent),
               ),
 
-            if (_is2xSpeed)
-              Positioned(
-                bottom: bottomSafe.clamp(16.0, double.infinity) + 64,
-                left: 0,
-                right: 0,
-                child: IgnorePointer(
-                  child: Center(
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 18, vertical: 9),
-                      decoration: BoxDecoration(
-                        color: Colors.black.withValues(alpha: 0.80),
-                        borderRadius: BorderRadius.circular(24),
-                        border: Border.all(
-                          color: AppColors.accent.withValues(alpha: 0.55),
-                          width: 1,
-                        ),
-                        boxShadow: [
-                          BoxShadow(
-                            color: AppColors.accent.withValues(alpha: 0.25),
-                            blurRadius: 16,
-                          ),
-                        ],
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(Icons.fast_forward_rounded,
-                              color: AppColors.accent, size: 18),
-                          const SizedBox(width: 7),
-                          const Text(
-                            '2× Speed',
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 14,
-                              fontWeight: FontWeight.w700,
-                              letterSpacing: 0.3,
+              ValueListenableBuilder<bool>(
+                valueListenable: _isLongPressedNotifier,
+                builder: (_, isLongPressed, __) => isLongPressed
+                    ? IgnorePointer(
+                        child: Container(
+                            color: Colors.black.withValues(alpha: 0.35)),
+                      )
+                    : const SizedBox.shrink(),
+              ),
+
+              ValueListenableBuilder<bool>(
+                valueListenable: _is2xSpeedNotifier,
+                builder: (_, is2xSpeed, __) => is2xSpeed
+                    ? Positioned(
+                        bottom: bottomSafe.clamp(16.0, double.infinity) + 64,
+                        left: 0,
+                        right: 0,
+                        child: IgnorePointer(
+                          child: Center(
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 18,
+                                vertical: 9,
+                              ),
+                              decoration: BoxDecoration(
+                                color: Colors.black.withValues(alpha: 0.80),
+                                borderRadius: BorderRadius.circular(24),
+                                border: Border.all(
+                                  color: AppColors.accent.withValues(alpha: 0.55),
+                                  width: 1,
+                                ),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: AppColors.accent.withValues(alpha: 0.25),
+                                    blurRadius: 16,
+                                  ),
+                                ],
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(
+                                    Icons.fast_forward_rounded,
+                                    color: AppColors.accent,
+                                    size: 18,
+                                  ),
+                                  const SizedBox(width: 7),
+                                  const Text(
+                                    '2× Speed',
+                                    style: TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w700,
+                                      letterSpacing: 0.3,
+                                    ),
+                                  ),
+                                ],
+                              ),
                             ),
                           ),
-                        ],
+                        ),
+                      )
+                    : const SizedBox.shrink(),
+              ),
+
+              if (_showPlayPauseIcon)
+                Center(
+                  child: AnimatedBuilder(
+                    animation: _playPauseAnim,
+                    builder: (context, _) => Opacity(
+                      opacity: _playPauseAnim.value,
+                      child: Container(
+                        width: 72,
+                        height: 72,
+                        decoration: BoxDecoration(
+                          color: Colors.black.withValues(alpha: 0.5),
+                          shape: BoxShape.circle,
+                        ),
+                        child: Icon(
+                          _controller.value.isPlaying
+                              ? Icons.pause_rounded
+                              : Icons.play_arrow_rounded,
+                          color: Colors.white,
+                          size: 40,
+                        ),
                       ),
                     ),
                   ),
                 ),
+
+              Positioned(
+                left: 16,
+                bottom: bottomSafe + 64,
+                right: 80,
+                child: EpisodeInfoOverlay(episode: widget.episode),
               ),
 
-            if (_showPlayPauseIcon)
-              Center(
-                child: AnimatedBuilder(
-                  animation: _playPauseAnim,
-                  builder: (context, _) => Opacity(
-                    opacity: _playPauseAnim.value,
-                    child: Container(
-                      width: 72,
-                      height: 72,
-                      decoration: BoxDecoration(
-                        color: Colors.black.withValues(alpha: 0.5),
-                        shape: BoxShape.circle,
-                      ),
-                      child: Icon(
-                        _controller.value.isPlaying
-                            ? Icons.pause_rounded
-                            : Icons.play_arrow_rounded,
-                        color: Colors.white,
-                        size: 40,
-                      ),
-                    ),
-                  ),
+              Positioned(
+                right: 12,
+                bottom: bottomSafe + 64,
+                child: SideActionBar(
+                  episode: widget.episode,
+                  likeProvider: likeProvider,
+                  onLikeAdded: _showHeartAtCenter,
                 ),
               ),
 
-            Positioned(
-              left: 16,
-              bottom: bottomSafe + 64,
-              right: 80,
-              child: EpisodeInfoOverlay(episode: widget.episode),
-            ),
-
-            Positioned(
-              right: 12,
-              bottom: bottomSafe + 64,
-              child: SideActionBar(
-                episode: widget.episode,
-                likeProvider: likeProvider,
-                onLikeAdded: _showHeartAtCenter,
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: bottomSafe.clamp(16.0, double.infinity),
+                child: ProgressScrubber(controller: _controller),
               ),
-            ),
 
-            Positioned(
-              left: 0,
-              right: 0,
-              bottom: bottomSafe.clamp(16.0, double.infinity),
-              child: ProgressScrubber(controller: _controller),
-            ),
-
-            if (isPaywallActive)
-              PaywallOverlay(
-                episode: widget.episode,
-                onDismiss: _onPaywallDismissed,
-              ),
+              if (isPaywallActive)
+                PaywallOverlay(
+                  episode: widget.episode,
+                  onDismiss: _onPaywallDismissed,
+                ),
+            ],
           ],
         ],
       ),

@@ -3,7 +3,32 @@ import 'package:video_player/video_player.dart';
 import '../../../core/constants/app_constants.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/utils/duration_formatter.dart';
+import '../../../core/utils/haptic_util.dart';
 import '../painters/progress_bar_painter.dart';
+
+class _ScrubState {
+  final bool isDragging;
+  final double dragProgress;
+  final double tooltipX;
+
+  const _ScrubState({
+    this.isDragging = false,
+    this.dragProgress = 0.0,
+    this.tooltipX = 0.0,
+  });
+
+  _ScrubState copyWith({
+    bool? isDragging,
+    double? dragProgress,
+    double? tooltipX,
+  }) {
+    return _ScrubState(
+      isDragging: isDragging ?? this.isDragging,
+      dragProgress: dragProgress ?? this.dragProgress,
+      tooltipX: tooltipX ?? this.tooltipX,
+    );
+  }
+}
 
 class ProgressScrubber extends StatefulWidget {
   final VideoPlayerController controller;
@@ -16,11 +41,11 @@ class ProgressScrubber extends StatefulWidget {
 
 class _ProgressScrubberState extends State<ProgressScrubber>
     with SingleTickerProviderStateMixin {
-  bool _isDragging = false;
-  double _dragProgress = 0.0;
-  double _tooltipX = 0.0;
+  final ValueNotifier<_ScrubState> _scrubNotifier =
+      ValueNotifier(const _ScrubState());
   late AnimationController _expandController;
   late Animation<double> _heightAnim;
+  DateTime _lastHapticTime = DateTime(0);
 
   @override
   void initState() {
@@ -36,37 +61,39 @@ class _ProgressScrubberState extends State<ProgressScrubber>
       parent: _expandController,
       curve: Curves.easeOut,
     ));
-    widget.controller.addListener(_onVideoUpdate);
-  }
-
-  void _onVideoUpdate() {
-    if (!_isDragging && mounted) setState(() {});
   }
 
   void _onDragStart(DragStartDetails details) {
-    setState(() {
-      _isDragging = true;
-      _dragProgress = _getProgressFromX(details.localPosition.dx);
-      _tooltipX = details.localPosition.dx;
-    });
+    _scrubNotifier.value = _scrubNotifier.value.copyWith(
+      isDragging: true,
+      dragProgress: _getProgressFromX(details.localPosition.dx),
+      tooltipX: details.localPosition.dx,
+    );
     _expandController.forward();
+    HapticUtil.light();
   }
 
   void _onDragUpdate(DragUpdateDetails details) {
     final width = context.size?.width ?? 1;
     final clampedX = details.localPosition.dx.clamp(0.0, width);
-    setState(() {
-      _dragProgress = _getProgressFromX(clampedX);
-      _tooltipX = clampedX;
-    });
+    _scrubNotifier.value = _scrubNotifier.value.copyWith(
+      dragProgress: _getProgressFromX(clampedX),
+      tooltipX: clampedX,
+    );
+    final now = DateTime.now();
+    if (now.difference(_lastHapticTime).inMilliseconds >= 50) {
+      HapticUtil.selection();
+      _lastHapticTime = now;
+    }
   }
 
   void _onDragEnd(DragEndDetails details) {
     final duration = widget.controller.value.duration;
-    final seekTo = duration * _dragProgress;
+    final seekTo = duration * _scrubNotifier.value.dragProgress;
     widget.controller.seekTo(seekTo);
-    setState(() => _isDragging = false);
+    _scrubNotifier.value = _scrubNotifier.value.copyWith(isDragging: false);
     _expandController.reverse();
+    HapticUtil.light();
   }
 
   double _getProgressFromX(double x) {
@@ -74,38 +101,16 @@ class _ProgressScrubberState extends State<ProgressScrubber>
     return (x / width).clamp(0.0, 1.0);
   }
 
-  Duration get _currentPosition {
-    if (_isDragging) {
-      return widget.controller.value.duration * _dragProgress;
-    }
-    return widget.controller.value.position;
-  }
-
   @override
   void dispose() {
-    widget.controller.removeListener(_onVideoUpdate);
+    _scrubNotifier.dispose();
     _expandController.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    final value = widget.controller.value;
-    final duration = value.duration;
-    final position = _currentPosition;
     final screenWidth = MediaQuery.of(context).size.width;
-    final progress = duration.inMilliseconds > 0
-        ? (position.inMilliseconds / duration.inMilliseconds).clamp(0.0, 1.0)
-        : 0.0;
-    final buffered = value.buffered.isNotEmpty
-        ? (value.buffered.last.end.inMilliseconds / duration.inMilliseconds)
-            .clamp(0.0, 1.0)
-        : 0.0;
-
-    // Tooltip dimensions for clamping
-    const tooltipWidth = 96.0;
-    final tooltipLeft =
-        (_tooltipX - tooltipWidth / 2).clamp(8.0, screenWidth - tooltipWidth - 8.0);
 
     return GestureDetector(
       onHorizontalDragStart: _onDragStart,
@@ -118,9 +123,29 @@ class _ProgressScrubberState extends State<ProgressScrubber>
           clipBehavior: Clip.none,
           alignment: Alignment.bottomCenter,
           children: [
-            AnimatedBuilder(
-              animation: _heightAnim,
+            ListenableBuilder(
+              listenable: Listenable.merge([
+                _scrubNotifier,
+                _heightAnim,
+                widget.controller,
+              ]),
               builder: (context, _) {
+                final scrub = _scrubNotifier.value;
+                final value = widget.controller.value;
+                final duration = value.duration;
+                final position = scrub.isDragging
+                    ? duration * scrub.dragProgress
+                    : value.position;
+                final progress = duration.inMilliseconds > 0
+                    ? (position.inMilliseconds / duration.inMilliseconds)
+                        .clamp(0.0, 1.0)
+                    : 0.0;
+                final buffered = value.buffered.isNotEmpty
+                    ? (value.buffered.last.end.inMilliseconds /
+                            duration.inMilliseconds)
+                        .clamp(0.0, 1.0)
+                    : 0.0;
+
                 return Align(
                   alignment: Alignment.bottomCenter,
                   child: RepaintBoundary(
@@ -129,23 +154,34 @@ class _ProgressScrubberState extends State<ProgressScrubber>
                       painter: ProgressBarPainter(
                         progress: progress,
                         buffered: buffered,
-                        isDragging: _isDragging,
+                        isDragging: scrub.isDragging,
                       ),
                     ),
                   ),
                 );
               },
             ),
+            ValueListenableBuilder<_ScrubState>(
+              valueListenable: _scrubNotifier,
+              builder: (context, scrub, _) {
+                if (!scrub.isDragging) return const SizedBox.shrink();
 
-            if (_isDragging)
-              Positioned(
-                left: tooltipLeft,
-                bottom: 52, // above the 48px touch zone
-                child: _TimeTooltip(
-                  position: position,
-                  duration: duration,
-                ),
-              ),
+                const tooltipWidth = 96.0;
+                final tooltipLeft = (scrub.tooltipX - tooltipWidth / 2)
+                    .clamp(8.0, screenWidth - tooltipWidth - 8.0);
+                final duration = widget.controller.value.duration;
+                final position = duration * scrub.dragProgress;
+
+                return Positioned(
+                  left: tooltipLeft,
+                  bottom: 52,
+                  child: _TimeTooltip(
+                    position: position,
+                    duration: duration,
+                  ),
+                );
+              },
+            ),
           ],
         ),
       ),
